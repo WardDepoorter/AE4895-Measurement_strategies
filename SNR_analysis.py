@@ -8,7 +8,7 @@ current_dir = os.getcwd()
 
 #use conda base env, which has pyvims installed, to run this code.
 
-def load_vims_cube(cube, pixel): 
+def read_calibrated_cube(cube, pixel): 
     """
     Load VIMS spectra for a given pixel from a VIMS cube.
 
@@ -22,11 +22,27 @@ def load_vims_cube(cube, pixel):
     # Load the VIMS cube
     cube = VIMS(cube)
     # Extract the spectra for the specified pixel
-    spectra = cube[pixel[1], pixel[0], :]  
-    return 
+    spectrum = cube[pixel[0], pixel[1]].spectrum
+    wavelengths = cube.wvlns
+    plt.figure(figsize=(12, 10))
+
+    plt.imshow(cube@2.03, extent=cube.extent, cmap='gray', vmin=0, vmax=.25)
+
+    plt.colorbar(extend='max', label='I/F')
+
+    #you can place few points on the object to choose which VIMS spectra you would like to visualise
+    plt.scatter( pixel[0],pixel[1], s=150)
+
+    plt.xlabel(cube.slabel)
+    plt.ylabel(cube.llabel)
+
+    plt.xticks(cube.sticks)
+    plt.yticks(cube.lticks)
+    plt.show()   
+    return wavelengths, spectrum
 
 
-def read_vims_qub(filepath):
+def read_raw_cube(filepath):
     """
     Read a raw Cassini VIMS .qub file directly.
     Returns the data cube as a numpy array and the wavelength axis.
@@ -64,5 +80,19 @@ def read_vims_qub(filepath):
     cube = np.transpose(cube, (0, 2, 1))  # -> (Lines, Samples, Bands)
     
     return cube, n_lines, n_samples, n_bands
+cube_name = '1487298702_1'
+filename = current_dir + '/raw_flyby_data/v' + cube_name + '.qub'
+print(f"Reading raw cube from: {filename}")
+# cube, n_lines, n_samples, n_bands = read_raw_cube(filename)
+# print(f"Cube shape: {cube.shape} (Lines: {n_lines}, Samples: {n_samples}, Bands: {n_bands})")
+wavelengths, calibrated_spectrum = read_calibrated_cube(cube_name, (24, 32))
 
-cube_raw, nl, ns, nb = read_vims_qub('v1234567890_1.qub')
+# Plot the calibrated spectrum
+plt.figure(figsize=(10, 6))
+plt.plot(wavelengths, calibrated_spectrum, label='Calibrated Spectrum', color='blue')
+plt.xlabel('Wavelength (µm)')
+plt.ylabel('I/F')
+plt.title('Calibrated VIMS Spectrum at Pixel (20, 20)')
+plt.legend()
+plt.grid()
+plt.show()
