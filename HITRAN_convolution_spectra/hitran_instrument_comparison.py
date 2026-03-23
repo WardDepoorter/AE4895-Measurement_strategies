@@ -39,6 +39,7 @@ References
 - PE Spectrum 100: PerkinElmer product specifications
 """
 
+import os
 import sys
 import numpy as np
 import matplotlib.pyplot as plt
@@ -382,7 +383,5 @@ def main(parfile):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print('Usage: python3 hitran_instrument_comparison.py <path_to_combined.par>')
-        sys.exit(1)
-    main(sys.argv[1])
+    cd = os.getcwd()
+    main(cd + '/Compounds_2e3-4e3cm-1/69c12293_original.par')   # ← put your filename/path here

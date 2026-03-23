@@ -24,7 +24,9 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from scipy.special import wofz
 import sys, os
-
+from hapi import db_begin, partitionSum
+cd = os.getcwd()
+db_begin(cd + '/Hapifiles')  # initialize HAPI database
 
 # ── Constants ────────────────────────────────────────────────────────────────
 C_LIGHT   = 2.99792458e10   # cm/s
@@ -58,13 +60,12 @@ MOLEC_MASS  = {
 
 def Q_ratio(molec_id, T):
     """Returns Q(T_ref=296) / Q(T) for line strength scaling."""
-    if molec_id == MOLEC_CH4:
-        # CH4: Q ∝ T^1.5 at low T (symmetric top approximation)
-        return (T / T_REF) ** 1.5
-    elif molec_id == MOLEC_C2H6:
-        # C2H6: slightly higher power due to internal rotation modes
-        return (T / T_REF) ** 1.75
-    return 1.0
+    iso = 1  # main isotopologue
+    Q_T    = partitionSum(molec_id, iso, T)
+    Q_ref  = partitionSum(molec_id, iso, 296.0)
+    return Q_ref / Q_T  
+
+
 
 
 
@@ -144,6 +145,41 @@ def parse_hitran_par(filepath, molec_ids, nu_min, nu_max):
         print(f"  Mol {m}: {n_kept[m]} lines in [{nu_min}, {nu_max}] cm⁻¹")
     return lines_out
 
+def get_HITRAN_file_individual(filepath, nu_min, nu_max):
+    """
+    Read hitran transition files for individual molecules.
+    """
+    if not isinstance(filepath, (str, os.PathLike)):
+        raise TypeError(f"filepath must be a path-like string, got {type(filepath).__name__}: {filepath!r}")
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"HITRAN file not found: {filepath}")
+
+    lines_out = []
+    n_total = 0
+
+    with open(filepath, 'r') as f:
+        for raw in f:
+            if len(raw) < 100:
+                continue
+            try:
+                nu = float(raw[3:15])
+                if not (nu_min <= nu <= nu_max):
+                    continue
+                sw         = float(raw[15:25])
+                gamma_air  = float(raw[35:40])
+                gamma_self = float(raw[40:45])
+                elower     = float(raw[45:55])
+                n_air      = float(raw[55:59])
+            except ValueError:
+                continue
+
+            lines_out.append((nu, sw, gamma_air, gamma_self, elower, n_air))
+            n_total += 1
+
+    # print(f"Mol }: {n_total} lines in [{nu_min}, {nu_max}] cm⁻¹")
+    return lines_out
+    
+    
 # ── Cross-section grid builder ─────────────────────────────────────────────
 def build_xsec(line_list, molec_id, nu_grid, T, P,
                wing_cutoff_cm1=0.8, progress=True):
@@ -196,34 +232,37 @@ def convolve_resolution(nu_grid, xsec, R):
     return gaussian_filter1d(xsec, sigma=sigma_px)
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-def main(parfile):
+def main():
     # spectral regions of interest
     REGIONS = {
-        'C–H Stretch\n(2800–3200 cm⁻¹)': (2000, 4000),
+        ' 2000-4000cm-1': (2000, 4000),
     }
     NU_MIN_GLOBAL = 2000
     NU_MAX_GLOBAL = 4000
 
-    RESOLUTIONS = [100000, 10000, 1000, 200] # set wrt instruments
+    RESOLUTIONS = [100_000, 10_000, 1_000, 200] # set wrt instruments
     RES_LABELS  = ['R = 100,000', 'R = 10,000', 'R = 1,000', 'R = 200']
     RES_COLORS  = ['#38bdf8', '#34d399', '#fbbf24', '#f87171']
 
     GRID_SPACING = 0.005   # cm⁻¹ — 6× Doppler FWHM at 100K; sufficient for R≤100000
 
-    MOL_IDS   = [MOLEC_CH4]
-    MOL_NAMES = {MOLEC_CH4: 'CH₄'}
-    MOL_COLS  = {MOLEC_CH4: '#22c55e'}
+    MOL_IDS   = [MOLEC_CH4, MOLEC_CO2, MOLEC_NH3, MOLEC_CH3_OH, MOLEC_H20]
+  
+    MOL_INDEXES = {MOLEC_CH4: 61, MOLEC_CO2: 21, MOLEC_NH3: 111, MOLEC_CH3_OH: 391, MOLEC_H20: 11}
+    MOL_NAMES = {MOLEC_CH4: 'CH₄',MOLEC_CO2: 'CO₂', MOLEC_NH3: 'NH₃',MOLEC_CH3_OH: 'CH₃OH', MOLEC_H20: 'H₂O'}
+    MOL_COLS  = {MOLEC_CH4: '#22c55e', MOLEC_CO2: "#833bf6", MOLEC_NH3: '#fbbf24', MOLEC_CH3_OH: '#e879f9', MOLEC_H20: '#38bdf8'}
 
     # ── Parse ──────────────────────────────────────────────────────────────
-    print(f"\nParsing {parfile} ...")
-    line_data = parse_hitran_par(parfile, MOL_IDS, NU_MIN_GLOBAL, NU_MAX_GLOBAL)
-
+    #print(f"\nParsing {parfile} ...")
     # ── Build cross-sections per region per molecule ───────────────────────
     xsec_data = {}   # {mol_id: {region_label: (nu_grid, xsec_raw)}}
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    compounds_dir = os.path.join(base_dir, 'Compounds_2e3-4e3cm-1')
 
     for mol_id in MOL_IDS:
         xsec_data[mol_id] = {}
-        lines = line_data[mol_id]
+        filepath_ind = os.path.join(compounds_dir, f'{MOL_INDEXES[mol_id]}.par')
+        lines = get_HITRAN_file_individual(filepath_ind, NU_MIN_GLOBAL, NU_MAX_GLOBAL)
         if not lines:
             print(f"WARNING: no lines found for molecule {mol_id}")
             continue
@@ -241,31 +280,134 @@ def main(parfile):
             xsec    = build_xsec(reg_lines, mol_id, nu_grid, T_SIM, P_SIM)
             xsec_data[mol_id][reg_label] = (nu_grid, xsec)
 
-    # ── Plot ───────────────────────────────────────────────────────────────
+    # # ── Plot ───────────────────────────────────────────────────────────────
+    # n_rows = len(RESOLUTIONS)
+    # n_cols = len(REGIONS)
+    # reg_labels = list(REGIONS.keys())
+
+    # fig = plt.figure(figsize=(18, 14), facecolor='#0f1117')
+    # fig.suptitle(
+    #     'CH₄  —  Absorption Cross-Section from HITRAN Line Data\n'
+    #     f'T = {T_SIM:.0f} K, P ≈ {P_SIM:.0e} atm  (Doppler-limited, Enceladus plume conditions)',
+    #     color='white', fontsize=13, fontweight='bold', y=0.99
+    # )
+
+    # gs = gridspec.GridSpec(n_rows, n_cols, figure=fig,
+    #                        hspace=0.07, wspace=0.06,
+    #                        left=0.07, right=0.97, top=0.93, bottom=0.07)
+
+    # for row, (R, rlabel, rcol) in enumerate(zip(RESOLUTIONS, RES_LABELS, RES_COLORS)):
+    #     for col, reg_label in enumerate(reg_labels):
+    #         ax = fig.add_subplot(gs[row, col])
+    #         ax.set_facecolor('#0f1117')
+    #         ax.spines[:].set_color('#1e293b')
+    #         ax.tick_params(colors='#64748b', labelsize=8)
+
+    #         nu_lo, nu_hi = REGIONS[reg_label]
+    #         plotted_any = False
+
+    #         peak_vals = {}
+    #         convolved = {}
+
+    #         for mol_id in MOL_IDS:
+    #             if reg_label not in xsec_data[mol_id]:
+    #                 continue
+    #             nu_grid, xsec_raw = xsec_data[mol_id][reg_label]
+    #             xsec_conv = convolve_resolution(nu_grid, xsec_raw, R)
+    #             convolved[mol_id] = (nu_grid, xsec_conv)
+    #             peak_vals[mol_id] = xsec_conv.max() if xsec_conv.max() > 0 else 1.0
+
+    #         # normalise to global max across both molecules in this panel
+    #         global_max = max(peak_vals.values()) if peak_vals else 1.0
+
+    #         for mol_id in MOL_IDS:
+    #             if mol_id not in convolved:
+    #                 continue
+    #             nu_grid, xc = convolved[mol_id]
+    #             xc_norm = xc / global_max
+    #             c = MOL_COLS[mol_id]
+    #             ax.fill_between(nu_grid, xc_norm, alpha=0.12, color=c)
+    #             ax.plot(nu_grid, xc_norm, color=c, lw=0.9,
+    #                     label=MOL_NAMES[mol_id])
+    #             plotted_any = True
+
+    #         ax.set_xlim(nu_lo, nu_hi)
+    #         ax.set_ylim(-0.04, 1.18)
+
+    #         # Resolution badge (left)
+    #         ax.text(0.02, 0.90, rlabel,
+    #                 transform=ax.transAxes, color=rcol, fontsize=9,
+    #                 fontweight='bold',
+    #                 bbox=dict(boxstyle='round,pad=0.3', fc='#0f1117',
+    #                           ec=rcol, alpha=0.9))
+
+    #         # # Distinguishability metric (right)
+    #         # if len(convolved) == 2:
+    #         #     a = convolved[MOLEC_CH4][1]   / global_max
+    #         #     b = convolved[MOLEC_C2H6][1]  / global_max
+    #         #     overlap = (np.trapezoid(np.minimum(a, b)) /
+    #         #                max(np.trapezoid(np.maximum(a, b)), 1e-30))
+    #         #     if overlap < 0.40:
+    #         #         badge, bc = '✓ Distinguishable', '#22c55e'
+    #         #     elif overlap < 0.70:
+    #         #         badge, bc = '~ Marginal',        '#eab308'
+    #         #     else:
+    #         #         badge, bc = '✗ Merged',          '#ef4444'
+    #         #     ax.text(0.98, 0.90, badge, transform=ax.transAxes,
+    #         #             color=bc, fontsize=8, ha='right',
+    #         #             bbox=dict(boxstyle='round,pad=0.3', fc='#0f1117',
+    #         #                       ec=bc, alpha=0.85))
+
+    #         # Column title (top row only)
+    #         if row == 0:
+    #             ax.set_title(reg_label, color='white', fontsize=11, pad=6)
+    #             ax.legend(facecolor='#1e293b', edgecolor='#334155',
+    #                       labelcolor='white', fontsize=9,
+    #                       loc='upper right' if col==0 else 'upper left')
+
+    #         # x-axis label (bottom row only)
+    #         if row == n_rows - 1:
+    #             ax.set_xlabel('Wavenumber (cm⁻¹)', color='#94a3b8', fontsize=9)
+    #         else:
+    #             ax.set_xticklabels([])
+
+    #         # y-axis label (left column only)
+    #         if col == 0:
+    #             ax.set_ylabel('Norm. Cross-Section', color='#94a3b8', fontsize=8)
+    #         else:
+    #             ax.set_yticklabels([])
+
+    # # Footer
+    # fig.text(0.5, 0.005,
+    #          f'HITRAN line data; Voigt profiles; T={T_SIM:.0f}K, P={P_SIM:.0e}atm. '
+    #          'Instrument LSF: Gaussian with FWHM = ν_centre/R.',
+    #          ha='center', color='#475569', fontsize=7.5)
+
+
+    # plt.savefig('hitran_ch4_c2h6_resolution.png', dpi=180, bbox_inches='tight', facecolor='#0f1117')
+    # print(f"\nSaved to hitran_ch4_c2h6_resolution.png")
+# ── Plot ─────────────────────────────────────────────
+    plt.style.use('default')
+
     n_rows = len(RESOLUTIONS)
     n_cols = len(REGIONS)
     reg_labels = list(REGIONS.keys())
 
-    fig = plt.figure(figsize=(18, 14), facecolor='#0f1117')
-    fig.suptitle(
-        'CH₄  —  Absorption Cross-Section from HITRAN Line Data\n'
-        f'T = {T_SIM:.0f} K, P ≈ {P_SIM:.0e} atm  (Doppler-limited, Enceladus plume conditions)',
-        color='white', fontsize=13, fontweight='bold', y=0.99
-    )
+    fig = plt.figure(figsize=(18, 14))
+    # fig.suptitle(
+    #     'CH₄ — Absorption Cross-Section from HITRAN Line Data\n'
+    #     f'T = {T_SIM:.0f} K, P ≈ {P_SIM:.0e} atm (Doppler-limited, Enceladus plume conditions)',
+    #     fontsize=13, fontweight='bold'
+    # )
 
     gs = gridspec.GridSpec(n_rows, n_cols, figure=fig,
-                           hspace=0.07, wspace=0.06,
-                           left=0.07, right=0.97, top=0.93, bottom=0.07)
+                        hspace=0.2, wspace=0.15)
 
     for row, (R, rlabel, rcol) in enumerate(zip(RESOLUTIONS, RES_LABELS, RES_COLORS)):
         for col, reg_label in enumerate(reg_labels):
             ax = fig.add_subplot(gs[row, col])
-            ax.set_facecolor('#0f1117')
-            ax.spines[:].set_color('#1e293b')
-            ax.tick_params(colors='#64748b', labelsize=8)
 
             nu_lo, nu_hi = REGIONS[reg_label]
-            plotted_any = False
 
             peak_vals = {}
             convolved = {}
@@ -278,7 +420,6 @@ def main(parfile):
                 convolved[mol_id] = (nu_grid, xsec_conv)
                 peak_vals[mol_id] = xsec_conv.max() if xsec_conv.max() > 0 else 1.0
 
-            # normalise to global max across both molecules in this panel
             global_max = max(peak_vals.values()) if peak_vals else 1.0
 
             for mol_id in MOL_IDS:
@@ -287,68 +428,38 @@ def main(parfile):
                 nu_grid, xc = convolved[mol_id]
                 xc_norm = xc / global_max
                 c = MOL_COLS[mol_id]
-                ax.fill_between(nu_grid, xc_norm, alpha=0.12, color=c)
-                ax.plot(nu_grid, xc_norm, color=c, lw=0.9,
-                        label=MOL_NAMES[mol_id])
-                plotted_any = True
+
+                ax.fill_between(nu_grid, xc_norm, alpha=0.2, color=c)
+                ax.plot(nu_grid, xc_norm, lw=1.0, color=c, label=MOL_NAMES[mol_id])
 
             ax.set_xlim(nu_lo, nu_hi)
             ax.set_ylim(-0.04, 1.18)
 
-            # Resolution badge (left)
-            ax.text(0.02, 0.90, rlabel,
-                    transform=ax.transAxes, color=rcol, fontsize=9,
-                    fontweight='bold',
-                    bbox=dict(boxstyle='round,pad=0.3', fc='#0f1117',
-                              ec=rcol, alpha=0.9))
+            # Resolution label
+            ax.text(0.02, 0.90, rlabel, transform=ax.transAxes, fontsize=9)
 
-            # # Distinguishability metric (right)
-            # if len(convolved) == 2:
-            #     a = convolved[MOLEC_CH4][1]   / global_max
-            #     b = convolved[MOLEC_C2H6][1]  / global_max
-            #     overlap = (np.trapezoid(np.minimum(a, b)) /
-            #                max(np.trapezoid(np.maximum(a, b)), 1e-30))
-            #     if overlap < 0.40:
-            #         badge, bc = '✓ Distinguishable', '#22c55e'
-            #     elif overlap < 0.70:
-            #         badge, bc = '~ Marginal',        '#eab308'
-            #     else:
-            #         badge, bc = '✗ Merged',          '#ef4444'
-            #     ax.text(0.98, 0.90, badge, transform=ax.transAxes,
-            #             color=bc, fontsize=8, ha='right',
-            #             bbox=dict(boxstyle='round,pad=0.3', fc='#0f1117',
-            #                       ec=bc, alpha=0.85))
-
-            # Column title (top row only)
             if row == 0:
-                ax.set_title(reg_label, color='white', fontsize=11, pad=6)
-                ax.legend(facecolor='#1e293b', edgecolor='#334155',
-                          labelcolor='white', fontsize=9,
-                          loc='upper right' if col==0 else 'upper left')
+                ax.set_title(reg_label, fontsize=11)
+                ax.legend(fontsize=9)
 
-            # x-axis label (bottom row only)
             if row == n_rows - 1:
-                ax.set_xlabel('Wavenumber (cm⁻¹)', color='#94a3b8', fontsize=9)
+                ax.set_xlabel('Wavenumber (cm⁻¹)')
             else:
                 ax.set_xticklabels([])
 
-            # y-axis label (left column only)
             if col == 0:
-                ax.set_ylabel('Norm. Cross-Section', color='#94a3b8', fontsize=8)
+                ax.set_ylabel('absorption cross-section (norm.)')
             else:
                 ax.set_yticklabels([])
 
-    # Footer
-    fig.text(0.5, 0.005,
-             f'HITRAN line data; Voigt profiles; T={T_SIM:.0f}K, P={P_SIM:.0e}atm. '
-             'Instrument LSF: Gaussian with FWHM = ν_centre/R.',
-             ha='center', color='#475569', fontsize=7.5)
+    # fig.text(0.5, 0.01,
+    #         f'HITRAN line data; Voigt profiles; T={T_SIM:.0f}K, P={P_SIM:.0e}atm. '
+    #         'Instrument LSF: Gaussian with FWHM = ν_centre/R.',
+    #         ha='center', fontsize=8)
 
-
-    plt.savefig('hitran_ch4_c2h6_resolution.png', dpi=180, bbox_inches='tight', facecolor='#0f1117')
-    print(f"\nSaved to hitran_ch4_c2h6_resolution.png")
-
+    plt.savefig('hitran_ch4_c2h6_resolution.png', dpi=180, bbox_inches='tight')
+    print("\nSaved to hitran_ch4_c2h6_resolution.png")
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     cd = os.getcwd()
-    main(cd + '/Compounds_2e3-4e3cm-1/69c12293_original.par')   # ← put your filename/path here
+    main()   # ← put your filename/path here
