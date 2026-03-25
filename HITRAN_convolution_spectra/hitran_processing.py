@@ -240,8 +240,8 @@ def main():
     NU_MIN_GLOBAL = 2000
     NU_MAX_GLOBAL = 4000
 
-    RESOLUTIONS = [100_000, 10_000, 1_000, 200] # set wrt instruments
-    RES_LABELS  = ['R = 100,000', 'R = 10,000', 'R = 1,000', 'R = 200']
+    RESOLUTIONS = [100_000, 800, 350, 200] # set wrt instruments
+    RES_LABELS  = ['No smoothing(R = 100,000)', 'Perkin-Elmer 100(R = 800)', 'MISE(R = 350)', 'VIMS(R =200)']
     RES_COLORS  = ['#38bdf8', '#34d399', '#fbbf24', '#f87171']
 
     GRID_SPACING = 0.005   # cm⁻¹ — 6× Doppler FWHM at 100K; sufficient for R≤100000
@@ -389,8 +389,8 @@ def main():
 # ── Plot ─────────────────────────────────────────────
     plt.style.use('default')
 
-    n_rows = len(RESOLUTIONS)
-    n_cols = len(REGIONS)
+    n_rows = 2
+    n_cols = 2
     reg_labels = list(REGIONS.keys())
 
     fig = plt.figure(figsize=(18, 14))
@@ -403,61 +403,63 @@ def main():
     gs = gridspec.GridSpec(n_rows, n_cols, figure=fig,
                         hspace=0.2, wspace=0.15)
 
-    for row, (R, rlabel, rcol) in enumerate(zip(RESOLUTIONS, RES_LABELS, RES_COLORS)):
-        for col, reg_label in enumerate(reg_labels):
-            ax = fig.add_subplot(gs[row, col])
+    reg_label = reg_labels[0]
+    nu_lo, nu_hi = REGIONS[reg_label]
 
-            nu_lo, nu_hi = REGIONS[reg_label]
+    for idx, (R, rlabel, rcol) in enumerate(zip(RESOLUTIONS, RES_LABELS, RES_COLORS)):
+        row = idx // n_cols
+        col = idx % n_cols
+        ax = fig.add_subplot(gs[row, col])
 
-            peak_vals = {}
-            convolved = {}
+        peak_vals = {}
+        convolved = {}
 
-            for mol_id in MOL_IDS:
-                if reg_label not in xsec_data[mol_id]:
-                    continue
-                nu_grid, xsec_raw = xsec_data[mol_id][reg_label]
-                xsec_conv = convolve_resolution(nu_grid, xsec_raw, R)
-                convolved[mol_id] = (nu_grid, xsec_conv)
-                peak_vals[mol_id] = xsec_conv.max() if xsec_conv.max() > 0 else 1.0
+        for mol_id in MOL_IDS:
+            if reg_label not in xsec_data[mol_id]:
+                continue
+            nu_grid, xsec_raw = xsec_data[mol_id][reg_label]
+            xsec_conv = convolve_resolution(nu_grid, xsec_raw, R)
+            convolved[mol_id] = (nu_grid, xsec_conv)
+            peak_vals[mol_id] = xsec_conv.max() if xsec_conv.max() > 0 else 1.0
 
-            global_max = max(peak_vals.values()) if peak_vals else 1.0
+        global_max = max(peak_vals.values()) if peak_vals else 1.0
 
-            for mol_id in MOL_IDS:
-                if mol_id not in convolved:
-                    continue
-                nu_grid, xc = convolved[mol_id]
-                xc_norm = xc / global_max
-                c = MOL_COLS[mol_id]
+        for mol_id in MOL_IDS:
+            if mol_id not in convolved:
+                continue
+            nu_grid, xc = convolved[mol_id]
+            xc_norm = xc / global_max
+            c = MOL_COLS[mol_id]
 
-                ax.fill_between(nu_grid, xc_norm, alpha=0.2, color=c)
-                ax.plot(nu_grid, xc_norm, lw=1.0, color=c, label=MOL_NAMES[mol_id])
+            ax.fill_between(nu_grid, xc_norm, alpha=0.2, color=c)
+            ax.plot(nu_grid, xc_norm, lw=1.0, color=c, label=MOL_NAMES[mol_id])
 
-            ax.set_xlim(nu_lo, nu_hi)
-            ax.set_ylim(-0.04, 1.18)
+        ax.set_xlim(nu_lo, nu_hi)
+        ax.set_ylim(-0.04, 1.18)
 
-            # Resolution label
-            ax.text(0.02, 0.90, rlabel, transform=ax.transAxes, fontsize=9)
+        # Resolution label
+        ax.text(0.02, 0.90, rlabel, transform=ax.transAxes, fontsize=9)
 
-            if row == 0:
-                ax.set_title(reg_label, fontsize=11)
-                ax.legend(fontsize=9)
+        if idx == 0:
+            ax.set_title(reg_label, fontsize=11)
+            ax.legend(fontsize=9)
 
-            if row == n_rows - 1:
-                ax.set_xlabel('Wavenumber (cm⁻¹)')
-            else:
-                ax.set_xticklabels([])
+        if row == n_rows - 1:
+            ax.set_xlabel('Wavenumber (cm⁻¹)')
+        else:
+            ax.set_xticklabels([])
 
-            if col == 0:
-                ax.set_ylabel('absorption cross-section (norm.)')
-            else:
-                ax.set_yticklabels([])
+        if col == 0:
+            ax.set_ylabel('absorption(norm.)')
+        else:
+            ax.set_yticklabels([])
 
     # fig.text(0.5, 0.01,
     #         f'HITRAN line data; Voigt profiles; T={T_SIM:.0f}K, P={P_SIM:.0e}atm. '
     #         'Instrument LSF: Gaussian with FWHM = ν_centre/R.',
     #         ha='center', fontsize=8)
-
-    plt.savefig('hitran_ch4_c2h6_resolution.png', dpi=180, bbox_inches='tight')
+    plt.show()
+    plt.savefig('hitran_ch4_c2h6_resolution.png', dpi=300, bbox_inches='tight')
     print("\nSaved to hitran_ch4_c2h6_resolution.png")
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == '__main__':

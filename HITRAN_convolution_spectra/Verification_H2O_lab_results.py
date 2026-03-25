@@ -164,7 +164,7 @@ if __name__ == '__main__':
     N = (P_lab * 101325) / (1.38e-23 * T_lab)  # molecules/cm³
 
     # Optionally convolve to a lab resolution (e.g., R=1000)
-    R_lab = 30  # adjust as needed
+    R_lab = 20  # adjust as needed
     xsec_conv = convolve_resolution(nu_grid, xsec_raw, R_lab)
 
     # Compute absorption coefficient and transmittance
@@ -190,4 +190,4 @@ if __name__ == '__main__':
     plt.grid(True, alpha=0.3)
     plt.title(f"H₂O Transmittance (L={L} cm, T={T_lab:.0f} K, P={P_lab} atm)")
     plt.tight_layout()
-    plt.show()
+    plt.savefig('h2o_lab_comparison.png', dpi=300)
