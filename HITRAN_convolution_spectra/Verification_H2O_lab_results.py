@@ -8,12 +8,20 @@ from hapi import db_begin, partitionSum
 from scipy.ndimage import gaussian_filter1d
 from scipy.interpolate import interp1d
 import pandas as pd
+
+
+
 cd = os.getcwd()
 path_to_sample = '/Users/ward/Documents/GitHub/Ward-github/Measurement strategies for planetary science missions/AE4895-Measurement_strategies/FTIR/sample B.csv'
+
+
 #readfile, skip row 0,1, delimiter is ';', decimal seperator is ',', unpack into np_exp and T_exp
+
 df = pd.read_csv(path_to_sample, delimiter=';', decimal=',', skiprows=2)
 np_exp = df.iloc[:, 0].values
 T_exp = df.iloc[:, 1].values
+
+
 def main():
     # spectral regions of interest
     REGIONS = {
@@ -126,7 +134,7 @@ def main():
                 ax.set_xticklabels([])
 
             if col == 0:
-                ax.set_ylabel('absorption cross-section (norm.)')
+                ax.set_ylabel('absorption(norm.)')
             else:
                 ax.set_yticklabels([])
 
@@ -147,6 +155,7 @@ def main():
         return xsec_raw, nu_grid
     else:
         return None, None
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     cd = os.getcwd()
@@ -188,6 +197,6 @@ if __name__ == '__main__':
     plt.legend()
     plt.gca().invert_xaxis()
     plt.grid(True, alpha=0.3)
-    plt.title(f"H₂O Transmittance (L={L} cm, T={T_lab:.0f} K, P={P_lab} atm)")
+    # plt.title(f"H₂O Transmittance")
     plt.tight_layout()
     plt.savefig('h2o_lab_comparison.png', dpi=300)

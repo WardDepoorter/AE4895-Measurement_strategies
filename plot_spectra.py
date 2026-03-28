@@ -1,10 +1,34 @@
 import numpy as np
 import matplotlib as mpl
 from matplotlib import pyplot as plt
-mpl.rcParams["font.size"] = 14
+mpl.rcParams["font.size"] = 16
 import re
 import os
 import pandas as pd
+
+from scipy import sparse
+from scipy.sparse.linalg import spsolve
+from scipy.signal import savgol_filter
+
+def baseline_als(y, lam=1e5, p=0.01, niter=10):
+    L = len(y)
+    D = sparse.diags([1,-2,1],[0,1,2], shape=(L-2,L))
+    w = np.ones(L)
+    for _ in range(niter):
+        W = sparse.spdiags(w, 0, L, L)
+        Z = W + lam * D.T @ D
+        z = spsolve(Z, w*y)
+        w = p * (y > z) + (1-p) * (y < z)
+    return z
+def preprocess(data):
+    x = data["wavenumber_cm1"].values
+    y = data["transmittance"].values
+
+    baseline = baseline_als(y)
+    y_corr = y - baseline
+
+    return x, y_corr
+
 current_directory = os.getcwd()
 intrument_name = "RAMAN"
 filetype = "txt"
@@ -100,3 +124,38 @@ plt.gca().invert_xaxis()  # typical for IR spectra
 
 plt.legend()
 plt.show()
+
+
+plt.figure(figsize=(12,10))
+
+offset = 1.2
+datasets = [
+    ("A", dataA),
+    ("B", dataB),
+    ("C", dataC),
+    ("D", dataD),
+    ("E", dataE),
+    ("F", dataF),
+    ("G", dataG),
+    ("NaCl", dataNaCl),
+    ("NaBr", dataNaBr),
+]
+
+for i, (label, data) in enumerate(datasets):
+    x, y = preprocess(data)
+
+    # smoothing + normalization
+    from scipy.signal import savgol_filter
+    y = savgol_filter(y, 10, 4)
+    y = y / np.max(y)
+
+    plt.plot(x, y + i*offset, label=label)
+
+plt.xlabel("Wavenumber (cm⁻¹)")
+plt.ylabel("Normalized intensity (offset)")
+# plt.title("Raman Spectra (baseline corrected)")
+plt.gca().invert_xaxis()
+
+plt.legend(loc="lower left", fontsize=14)
+plt.tight_layout()
+plt.savefig("Raman_spectra_baseline_corrected.png", dpi=300)
